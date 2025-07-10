@@ -6,14 +6,17 @@ An automatic post generator based on your existing coffee shop list with Google 
 - **Process Existing Lists**: Work with your curated coffee shop lists (CSV format)
 - **Google Maps URL Parsing**: Extract place IDs from Google Maps URLs
 - **Rich Metadata Enrichment**: Get ratings, reviews, hours, photos, and more
+- **Photo Downloads**: Automatically download photo bytes from Google Maps
+- **AI-Powered Reviews**: Generate work/study-focused reviews in English and Chinese
 - **Structured Data Export**: Export to CSV, GeoJSON, and other formats
 - **Post Generation Ready**: All data needed for automated content creation
 
 ## 📋 Prerequisites
 
 1. **Google Maps API Key**: You'll need a Google Maps API key with the Places API enabled
-2. **Python 3.12+**: This project uses modern Python features
-3. **Coffee Shop List**: CSV file with your coffee shop URLs from Google Maps
+2. **Anthropic API Key**: For AI-powered review generation (optional)
+3. **Python 3.12+**: This project uses modern Python features
+4. **Coffee Shop List**: CSV file with your coffee shop URLs from Google Maps
 
 ## 🛠️ Setup
 
@@ -36,7 +39,7 @@ uv pip install -e .
 4. Create an API key in the "Credentials" section
 5. (Optional) Restrict the API key to the Places API for security
 
-### 3. Configure API Key
+### 3. Configure API Keys
 
 Create a `.env` file in the project root:
 
@@ -44,9 +47,15 @@ Create a `.env` file in the project root:
 # Copy the template
 cp config_template.env .env
 
-# Edit the file and add your API key
+# Edit the file and add your API keys
 GOOGLE_MAPS_API_KEY=your_actual_api_key_here
+ANTHROPIC_API_KEY=your_actual_anthropic_api_key_here  # Optional, for AI reviews
 ```
+
+**For AI-powered reviews**: 
+1. Sign up at [Anthropic Console](https://console.anthropic.com/)
+2. Create an API key
+3. Add it to your `.env` file as shown above
 
 ### 4. Prepare Your Coffee Shop List
 
@@ -81,6 +90,9 @@ uv run coffee_project/example_usage.py --output_file results.csv --geojson
 
 # Quiet mode (minimal output)
 uv run coffee_project/example_usage.py --output_file results.csv --quiet
+
+# Generate AI-powered reviews (requires ANTHROPIC_API_KEY)
+uv run coffee_project/example_usage.py --output_file results.csv --generate_reviews
 ```
 
 ### Command Line Options
@@ -88,6 +100,7 @@ uv run coffee_project/example_usage.py --output_file results.csv --quiet
 - `--input_file`: Path to your CSV file with coffee shop list (default: `coffee_project/places_list/example_short_list.csv`)
 - `--output_file`: Output CSV file path for enriched data (default: `enriched_coffee_shops.csv`)
 - `--geojson`: Also export data as GeoJSON file
+- `--generate_reviews`: Generate AI-powered reviews in English and Chinese (requires ANTHROPIC_API_KEY)
 - `--quiet`: Suppress detailed output, only show essential information
 
 ### Basic Usage
@@ -147,7 +160,12 @@ The enriched coffee shop data includes:
 - **latitude/longitude**: Coordinates
 - **opening_hours**: Hours of operation
 - **photo_references**: Photo data
+- **photo_bytes**: Downloaded photo bytes (binary data)
 - **recent_reviews**: Review samples
+
+### AI-Generated Content (Optional)
+- **generated_review_en**: AI-generated review in English focused on work/study suitability
+- **generated_review_zh**: AI-generated review in Chinese focused on work/study suitability
 
 ## 🔧 How It Works
 
@@ -165,8 +183,21 @@ For each place ID, the system calls the Google Maps Places API to get:
 - Operating hours and contact info
 - Photos and additional metadata
 
-### 3. Data Structure
-The final output combines your original data with Google Maps data in a structured format perfect for:
+### 3. Photo Downloads
+The system automatically downloads photo bytes from Google Maps:
+- Uses the legacy Photo API for compatibility
+- Downloads photos at specified resolution (default 400x400)
+- Stores photo bytes directly in the data structure
+
+### 4. AI-Powered Review Generation (Optional)
+Using Anthropic's Claude, the system generates specialized reviews:
+- Focuses on work/study suitability (WiFi, outlets, long-stay policy)
+- Includes practical information (hours, accessibility)
+- Generates reviews in both English and Chinese
+- Based on existing customer reviews and place metadata
+
+### 5. Data Structure
+The final output combines your original data with Google Maps data and AI-generated content in a structured format perfect for:
 - Automated post generation
 - Content management systems
 - Analysis and reporting
@@ -202,6 +233,8 @@ The system works best with Google Maps URLs that contain:
 This tool is specifically designed for automated content creation:
 
 - **Rich Context**: Ratings, reviews, and photos for engaging posts
+- **Photo Content**: Downloaded photo bytes ready for posting
+- **AI-Generated Reviews**: Work/study-focused reviews in multiple languages
 - **Location Data**: Coordinates and addresses for location-based content
 - **Business Info**: Hours, contact details, and current status
 - **Your Personal Touch**: Your original notes and tags preserved

@@ -10,6 +10,7 @@ from urllib.parse import parse_qs, urlparse
 import geopandas as gpd
 import googlemaps
 import pandas as pd
+import requests
 from dotenv import load_dotenv
 
 # Load environment variables
@@ -159,7 +160,40 @@ class CoffeeShopProcessor:
             logger.warning(f"Error finding place ID for '{place_name}': {e}")
             return None
     
-
+    def get_photo_bytes(self, photo_reference: str, max_width: int = 400, max_height: int = 400) -> Optional[bytes]:
+        """Download photo bytes from Google Maps API.
+        
+        Args:
+            photo_reference: Photo reference string from place details
+            max_width: Maximum width of the photo (default 400)
+            max_height: Maximum height of the photo (default 400)
+            
+        Returns:
+            Photo bytes if successful, None otherwise
+        """
+        try:
+            # Construct the photo API URL
+            url = "https://maps.googleapis.com/maps/api/place/photo"
+            params = {
+                'photo_reference': photo_reference,
+                'maxwidth': max_width,
+                'maxheight': max_height,
+                'key': self.client.key
+            }
+            
+            # Make request to get photo
+            response = requests.get(url, params=params, timeout=30)
+            
+            if response.status_code == 200:
+                logger.info(f"Successfully downloaded photo ({len(response.content)} bytes)")
+                return response.content
+            else:
+                logger.warning(f"Failed to download photo: HTTP {response.status_code}")
+                return None
+                
+        except Exception as e:
+            logger.error(f"Error downloading photo: {e}")
+            return None
     
     def get_place_details(self, place_id: str) -> Optional[Dict[str, Any]]:
         """Get detailed information about a place.
@@ -215,6 +249,20 @@ class CoffeeShopProcessor:
             if details:
                 # Merge original data with detailed information
                 enriched_shop = {**shop, **details}
+                
+                # Download photos if available
+                if 'photos' in details and details['photos']:
+                    photo_bytes_list = []
+                    for photo in details['photos']:
+                        photo_bytes = self.get_photo_bytes(
+                            photo['photo_reference'], max_height=photo['height'], max_width=photo['width']
+                        )
+                        if photo_bytes:
+                            photo_bytes_list.append({**photo, 'photo_bytes': photo_bytes})
+                        else:
+                            logger.warning(f"Could not download photo for reference: {photo['photo_reference']}")
+                    enriched_shop['photos'] = photo_bytes_list
+                
                 enriched_shops.append(enriched_shop)
                 
                 # Add delay to respect API rate limits
@@ -287,6 +335,12 @@ def create_coffee_shop_dataframe(coffee_shops: List[Dict[str, Any]]) -> pd.DataF
                 data['review_count'] = len(reviews)
                 data['recent_review'] = reviews[0].get('text', '')[:200] + '...' if reviews else ''
             
+            # Generated reviews
+            if 'generated_reviews' in shop:
+                generated_reviews = shop['generated_reviews']
+                data['generated_review_en'] = generated_reviews.get('en', '')
+                data['generated_review_zh'] = generated_reviews.get('zh', '')
+            
             processed_data.append(data)
             
         except Exception as e:
@@ -324,13 +378,19 @@ def export_to_geojson(df: pd.DataFrame, output_file: str) -> None:
 
 def process_coffee_shop_list(csv_file_path: str, 
                            output_csv: Optional[str] = None,
-                           output_geojson: Optional[str] = None) -> pd.DataFrame:
+                           output_geojson: Optional[str] = None,
+                           generate_reviews: bool = False,
+                           generate_html: bool = False,
+                           output_path: Optional[str] = None) -> pd.DataFrame:
     """Process a coffee shop list and enrich it with Google Maps data.
     
     Args:
         csv_file_path: Path to the CSV file with coffee shop list
         output_csv: Optional path to save enriched data as CSV
         output_geojson: Optional path to save enriched data as GeoJSON
+        generate_reviews: Whether to generate AI-powered reviews
+        generate_html: Whether to generate HTML files for each coffee shop
+        output_path: Optional directory path for HTML files
         
     Returns:
         DataFrame with enriched coffee shop data
@@ -347,6 +407,32 @@ def process_coffee_shop_list(csv_file_path: str,
     
     # Enrich with Google Maps data
     enriched_shops = processor.enrich_coffee_shops(coffee_shops)
+    
+    # Generate reviews if requested
+    if generate_reviews:
+        try:
+            from anthropic_utils import ReviewGenerator
+            review_generator = ReviewGenerator()
+            enriched_shops = review_generator.generate_reviews_for_list(enriched_shops)
+            logger.info("Generated AI-powered reviews for all coffee shops")
+        except ImportError:
+            logger.warning("Could not import ReviewGenerator - skipping review generation")
+        except Exception as e:
+            logger.error(f"Error generating reviews: {e}")
+    
+    # Generate HTML files if requested
+    if generate_html and output_path:
+        try:
+            from html_utils import generate_html_files, generate_index_html
+            html_files_by_city = generate_html_files(enriched_shops, output_path)
+            if html_files_by_city:
+                generate_index_html(enriched_shops, output_path, html_files_by_city)
+                total_files = sum(len(files) for files in html_files_by_city.values())
+                logger.info(f"Generated {total_files} HTML files in {len(html_files_by_city)} cities in {output_path}")
+        except ImportError:
+            logger.warning("Could not import HTML utils - skipping HTML generation")
+        except Exception as e:
+            logger.error(f"Error generating HTML files: {e}")
     
     # Create DataFrame
     df = create_coffee_shop_dataframe(enriched_shops)

@@ -14,9 +14,11 @@ import pandas as pd
 # Add the coffee_project directory to the path
 sys.path.insert(0, str(Path(__file__).parent))
 
+from anthropic_utils import ReviewGenerator
 from google_maps_utils import (CoffeeShopProcessor,
                                create_coffee_shop_dataframe, export_to_geojson,
                                process_coffee_shop_list)
+from html_utils import generate_html_files, generate_index_html
 
 
 def parse_arguments():
@@ -25,10 +27,13 @@ def parse_arguments():
         description="Process a coffee shop list and enrich it with Google Maps metadata"
     )
     parser.add_argument(
-        "--output_file",
+        "--output_path",
         type=str,
-        default="enriched_coffee_shops.csv",
-        help="Output CSV file path for the enriched coffee shop data (default: enriched_coffee_shops.csv)"
+        default="ignore/",
+        help=(
+            "Output path for the enriched coffee shop data. The dataframe will be saved as a parquet file named "
+            "'enriched_coffee_shops.parquet' under the output path."
+        )
     )
     parser.add_argument(
         "--input_file",
@@ -38,13 +43,27 @@ def parse_arguments():
     )
     parser.add_argument(
         "--geojson",
-        action="store_true",
+        action=argparse.BooleanOptionalAction,
+        default=False,
         help="Also export data as GeoJSON file"
     )
     parser.add_argument(
         "--quiet",
-        action="store_true",
+        action=argparse.BooleanOptionalAction,
+        default=False,
         help="Suppress detailed output, only show essential information"
+    )
+    parser.add_argument(
+        "--generate_reviews",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Generate AI-powered reviews for each coffee shop (requires ANTHROPIC_API_KEY)"
+    )
+    parser.add_argument(
+        "--generate_html",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Generate HTML files for each coffee shop"
     )
     return parser.parse_args()
 
@@ -120,6 +139,39 @@ def main():
     
     print(f"✅ Successfully enriched {len(enriched_shops)} coffee shops!")
     
+    # Generate reviews if requested
+    if args.generate_reviews:
+        if not args.quiet:
+            print("\n" + "="*50)
+            print("Generating AI-powered reviews")
+            print("="*50)
+        
+        try:
+            review_generator = ReviewGenerator()
+            print("🤖 Generating reviews with Anthropic AI...")
+            
+            # Generate reviews for all coffee shops
+            enriched_shops = review_generator.generate_reviews_for_list(enriched_shops)
+            
+            print(f"✅ Generated reviews for {len(enriched_shops)} coffee shops!")
+            
+            if not args.quiet:
+                # Display sample review for the first shop
+                shop = enriched_shops[0]
+                reviews = shop.get('generated_reviews', {})
+                print(f"\n📝 Sample review for '{shop['name']}':")
+                print(f"   🇺🇸 English: {reviews.get('en', 'N/A')[:100]}...")
+                print(f"   🇨🇳 中文: {reviews.get('zh', 'N/A')[:100]}...")
+                
+        except ValueError as e:
+            print(f"❌ Error initializing review generator: {e}")
+            print("\nTo fix this:")
+            print("1. Get an Anthropic API key from: https://console.anthropic.com/")
+            print("2. Set the API key as an environment variable:")
+            print("   export ANTHROPIC_API_KEY='your_api_key_here'")
+            print("   or create a .env file with: ANTHROPIC_API_KEY=your_api_key_here")
+            print("3. Continuing without review generation...")
+    
     if not args.quiet:
         # Display detailed information for the first shop
         shop = enriched_shops[0]
@@ -176,17 +228,46 @@ def main():
         available_columns = [col for col in sample_columns if col in df.columns]
         print(df[available_columns].head(3).to_string(index=False))
     
-    # Save to CSV
-    df.to_csv(args.output_file, index=False)
-    print(f"💾 Saved enriched data to {args.output_file}")
+    # Create output directory
+    output_path = Path(args.output_path, os.path.splitext(os.path.basename(args.input_file))[0])
+    output_path.mkdir(parents=True, exist_ok=True)
+    
+    # Save to parquet
+    parquet_file = output_path / "enriched_coffee_shops.parquet"
+    df.to_parquet(parquet_file)
+    print(f"💾 Saved enriched data to {parquet_file}")
     
     # Export to GeoJSON if requested and we have location data
     if args.geojson and 'latitude' in df.columns and 'longitude' in df.columns:
-        geojson_file = args.output_file.replace('.csv', '.geojson')
+        geojson_file = output_path / "enriched_coffee_shops.geojson"
         export_to_geojson(df, geojson_file)
         print(f"🗺️ Exported GeoJSON to {geojson_file}")
     elif args.geojson:
         print("⚠️ Cannot export GeoJSON: missing latitude/longitude data")
+    
+    # Generate HTML files if requested
+    if args.generate_html:
+        if not args.quiet:
+            print("\n" + "="*50)
+            print("Generating HTML files")
+            print("="*50)
+        
+        print("🌐 Generating HTML files and saving images for each coffee shop...")
+        html_files_by_city = generate_html_files(enriched_shops, str(output_path))
+        
+        if html_files_by_city:
+            total_files = sum(len(files) for files in html_files_by_city.values())
+            print(f"✅ Generated {total_files} HTML files with images in {len(html_files_by_city)} cities")
+            
+            # Generate index HTML
+            index_file = generate_index_html(enriched_shops, str(output_path), html_files_by_city)
+            print(f"📄 Generated index file: {index_file}")
+            
+            if not args.quiet:
+                print(f"🔗 Open {index_file} in your browser to view all coffee shops")
+                print(f"🏙️ Cities: {', '.join(sorted(html_files_by_city.keys()))}")
+        else:
+            print("⚠️ No HTML files were generated")
     
     if not args.quiet:
         # Show what data is available for post generation
@@ -199,9 +280,13 @@ def main():
         print("   ⭐ Rating and review information")
         print("   📞 Contact information (phone, website)")
         print("   ⏰ Opening hours")
-        print("   📸 Photo references")
+        print("   📸 Photo references and photo bytes")
         print("   💰 Price level information")
         print("   📝 Your original notes and tags")
+        if args.generate_reviews:
+            print("   🤖 AI-generated reviews in English and Chinese")
+        if args.generate_html:
+            print("   🌐 Individual HTML pages for each coffee shop")
         
         print(f"\n📊 Available data fields:")
         for i, col in enumerate(df.columns, 1):
@@ -216,13 +301,6 @@ def main():
         
         print("\n" + "="*50)
         print("✨ Processing completed!")
-        print("="*50)
-        print("\nNext steps:")
-        print("1. Use the enriched CSV data to build your post generator")
-        print("2. Access ratings, reviews, and photos for engaging content")
-        print("3. Use location data to create location-specific posts")
-        print("4. Leverage opening hours and contact info for practical content")
-        print("5. Build automated workflows around this enriched data!")
 
 
 if __name__ == "__main__":

@@ -12,5 +12,7 @@ dependencies = [
     "geopandas>=0.14.0",
     "folium>=0.15.0",
     "beautifulsoup4>=4.12.0",
-    "lxml>=4.9.0"
+    "lxml>=4.9.0",
+    "anthropic>=0.57.1",
+    "pyarrow>=20.0.0",
 ]
